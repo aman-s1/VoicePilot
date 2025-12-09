@@ -1,6 +1,6 @@
 console.log("🎙️ VoicePilot loaded");
 
-function fillForms() {
+function fillFormsFromData(data) {
   const inputs = document.querySelectorAll("input, textarea, select");
 
   inputs.forEach((input) => {
@@ -8,43 +8,39 @@ function fillForms() {
     const placeholder = input.placeholder?.toLowerCase() || "";
     const id = input.id?.toLowerCase() || "";
 
-    if (name.includes("firstname") || placeholder.includes("firstname")) {
-      input.value = "Aman";
+    if (data.firstname && (name.includes("first") || placeholder.includes("first"))) {
+      input.value = data.firstname;
     }
 
-    if (name.includes("lastname") || placeholder.includes("lastname")) {
-      input.value = "Suhag";
+    if (data.lastname && (name.includes("last") || placeholder.includes("last"))) {
+      input.value = data.lastname;
     }
 
-    if (name.includes("email") || placeholder.includes("email")) {
-      input.value = "aman@example.com";
+    if (data.email && name.includes("email")) {
+      input.value = data.email;
     }
 
-    if (name.includes("phone") || placeholder.includes("phone")) {
-      input.value = "9876543210";
+    if (data.phone && (name.includes("phone") || name.includes("mobile"))) {
+      input.value = data.phone;
     }
 
-    if (name.includes("job") || placeholder.includes("job") || name.includes("title")) {
-      input.value = "Software Engineer";
+    if (data.job && (name.includes("job") || name.includes("title"))) {
+      input.value = data.job;
     }
 
-    if (name.includes("company") || placeholder.includes("company")) {
-      input.value = "Google DeepMind";
+    if (data.company && name.includes("company")) {
+      input.value = data.company;
     }
 
-    if (name.includes("subject") || id.includes("subject")) {
-      input.value = "general";
+    if (data.message && (name.includes("message") || placeholder.includes("message"))) {
+      input.value = data.message;
     }
 
-    if (name.includes("message") || placeholder.includes("message")) {
-      input.value = "Hello, I am interested in learning more about your services. Please get back to me.";
-    }
-
-    // Trigger change/input events (important!)
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
+
 
 let recognition;
 let isListening = false;
@@ -66,10 +62,14 @@ function startListening() {
   };
 
   recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
-    console.log("🗣️ User said:", transcript);
+    const rawTranscript = event.results[0][0].transcript;
+    const transcript = normalizeTranscript(rawTranscript);
 
-    alert(`You said:\n"${transcript}"`);
+    console.log("🗣️ Raw:", rawTranscript);
+    console.log("🧹 Normalized:", transcript);
+
+    const parsedData = parseTranscript(transcript, rawTranscript);
+    fillFormsFromData(parsedData);
   };
 
   recognition.onerror = (event) => {
@@ -84,8 +84,66 @@ function startListening() {
   recognition.start();
 }
 
+function normalizeTranscript(transcript) {
+  let text = transcript.toLowerCase();
 
-// 👇 Create floating button
+  // 1. Handle "at the rate" FIRST (most specific)
+  text = text.replace(/\bat\s+the\s+rate\b/g, "@");
+
+  // 2. Handle standalone "at"
+  text = text.replace(/\bat\b/g, "@");
+
+  // 3. Handle dot
+  text = text.replace(/\bdot\b/g, ".");
+
+  // 4. Other symbols
+  text = text.replace(/\bunderscore\b/g, "_");
+  text = text.replace(/\bdash\b/g, "-");
+
+  // 5. Remove spaces around email symbols
+  text = text.replace(/\s*@\s*/g, "@");
+  text = text.replace(/\s*\.\s*/g, ".");
+
+  // 6. Phone numbers: merge spaced digits
+  text = text.replace(/(\d)\s+(\d)/g, "$1$2");
+
+  return text.trim();
+}
+
+
+function parseTranscript(normalized, raw) {
+  const data = {};
+
+  const patterns = {
+    firstname: /(first name|firstname|name is)\s+([a-z]+)/i,
+    lastname: /(last name|lastname|surname)\s+([a-z]+)/i,
+    email: /(email|mail)\s+([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+    phone: /(phone|mobile|number)\s+([\d]{8,15})/i,
+    job: /(job|title|role)\s+([a-z\s]+)/i,
+    company: /(company|organization|firm)\s+([a-z\s]+)/i
+  };
+
+  for (const key in patterns) {
+    const match = normalized.match(patterns[key]);
+    if (match) data[key] = match[2].trim();
+  }
+
+  if (/message|comment|note/i.test(raw)) {
+    data.message = raw.replace(/^(message|comment|note)\s+/i, "").trim();
+  }
+
+  // Post-process capitalization
+  if (data.firstname) data.firstname = toTitleCase(data.firstname);
+  if (data.lastname) data.lastname = toTitleCase(data.lastname);
+  if (data.job) data.job = toTitleCase(data.job);
+  if (data.company) data.company = toTitleCase(data.company);
+
+  // Free text → sentence case (keep raw meaning)
+  if (data.message) data.message = toSentenceCase(data.message);
+
+  return data;
+}
+
 function createVoicePilotButton() {
   if (document.getElementById("voicepilot-btn")) return;
 
@@ -138,4 +196,21 @@ function createVoicePilotButton() {
 
 // Wait for page to load
 window.addEventListener("load", createVoicePilotButton);
+
+
+// Helper functions
+function toTitleCase(str) {
+  return str
+    .toLowerCase()
+    .split(" ")
+    .filter(Boolean)
+    .map(word => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function toSentenceCase(str) {
+  const s = str.trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 
