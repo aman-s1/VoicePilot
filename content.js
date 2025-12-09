@@ -117,17 +117,17 @@ function createVoicePilotButton() {
     position: "fixed",
     height: "50px",
     width: "50px",
-    top: "50%",
-    right: "0",
+    top: "30%",
+    right: "-6px",
     transform: "translateY(-50%)",
     zIndex: "9999",
-    padding: "0", // Explicitly remove padding for perfect centering
+    padding: "0",
     borderRadius: "12px 0 0 12px",
     border: "none",
     cursor: "pointer",
     background: "linear-gradient(135deg, #6366f1 0%, #ec4899 100%)",
     color: "#ffffff",
-    fontSize: "24px", // Slightly larger icon
+    fontSize: "24px",
     boxShadow: "-4px 4px 15px rgba(99, 102, 241, 0.35)",
     transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
     display: "flex",
@@ -136,10 +136,12 @@ function createVoicePilotButton() {
   });
 
   button.onmouseenter = () => {
-    button.style.transform = "translateY(-50%) translateX(-4px)";
+    // On hover, slide left to reveal fully and add glow
+    button.style.transform = "translateY(-50%) translateX(-6px)";
     button.style.boxShadow = "-6px 6px 20px rgba(99, 102, 241, 0.5)";
   };
   button.onmouseleave = () => {
+    // Return to original partial off-screen position
     button.style.transform = "translateY(-50%)";
     button.style.boxShadow = "-4px 4px 15px rgba(99, 102, 241, 0.35)";
   };
