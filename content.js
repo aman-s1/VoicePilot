@@ -7,6 +7,102 @@ let lastParsedData = null;
 let recognition;
 let isListening = false;
 
+const FIELD_KEYWORDS = {
+  email: ["email", "mail", "gmail"],
+  phone: ["phone", "mobile", "number"],
+  company: ["company", "organization", "org"],
+  job: ["job", "role", "title", "position"],
+  subject: ["subject", "topic", "regarding"],
+  firstname: ["firstname", "first"],
+  lastname: ["lastname", "last", "surname"],
+  name: ["name"],
+  message: ["message", "about", "description"]
+};
+
+
+function cleanTokenValue(field, value) {
+  if (field === "email") {
+    return value
+      .replace(/\s+at\s+| at /g, "@")
+      .replace(/\s+dot\s+| dot /g, ".")
+      .replace(/\s/g, "")
+      .toLowerCase();
+  }
+
+  if (field === "phone") {
+    return value.replace(/\D/g, "");
+  }
+
+  // Restore capitalization
+  if (field === "message") {
+    return toSentenceCase(value);
+  }
+  
+  return toTitleCase(value);
+}
+
+function tokenizeTranscript(text) {
+  const words = text.split(" ");
+  const tokens = [];
+
+  let currentField = null;
+  let buffer = [];
+
+  words.forEach((word) => {
+    // Smart skipping: If we are capturing first/last name, ignore the word 'name'
+    // This allows "First Name Aman" -> captures "Aman" under firstname
+    if (word === "name" && ["firstname", "lastname"].includes(currentField)) {
+        return; 
+    }
+
+    const matchedField = Object.keys(FIELD_KEYWORDS)
+      .find((field) => FIELD_KEYWORDS[field].includes(word));
+
+    if (matchedField) {
+      // If switching fields, save the previous one
+      if (currentField) {
+        tokens.push({ field: currentField, value: buffer.join(" ") });
+      }
+      currentField = matchedField;
+      buffer = [];
+    } else if (currentField) {
+      buffer.push(word);
+    }
+  });
+
+  if (currentField && buffer.length) {
+    tokens.push({ field: currentField, value: buffer.join(" ") });
+  }
+
+  return tokens;
+}
+
+function parseTranscript(normalized, raw) {
+  const tokens = tokenizeTranscript(normalized);
+  const result = {};
+
+  tokens.forEach(({ field, value }) => {
+    // Basic cleanup and capitalization
+    result[field] = cleanTokenValue(field, value);
+  });
+
+  // Handle name splitting if generic 'name' was used (e.g. "My name is Aman Suhag")
+  if (result.name) {
+    const parts = result.name.split(" ");
+    if (parts.length > 0) {
+        if (!result.firstname) result.firstname = parts[0];
+        if (!result.lastname && parts.length > 1) {
+            result.lastname = parts.slice(1).join(" ");
+        }
+    }
+    // Remove generic name field so it doesn't show up in Confirmation UI
+    delete result.name;
+  }
+
+  return result;
+}
+
+
 // ==========================================
 // 2. INITIALIZATION & UI (ENTRY POINT)
 // ==========================================
@@ -250,37 +346,58 @@ function normalizeTranscript(transcript) {
   return text.trim();
 }
 
-function parseTranscript(normalized, raw) {
-  const data = {};
+function tokenizeTranscript(text) {
+  const words = text.split(" ");
+  const tokens = [];
 
-  const patterns = {
-    firstname: /(first name|firstname|name is)\s+([a-z]+)/i,
-    lastname: /(last name|lastname|surname)\s+([a-z]+)/i,
-    email: /(email|mail)\s+([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
-    phone: /(phone|mobile|number)\s+([\d]{8,15})/i,
-    job: /(job|title|role)\s+([a-z\s]+)/i,
-    company: /(company|organization|firm)\s+([a-z\s]+)/i
-  };
+  let currentField = null;
+  let buffer = [];
 
-  for (const key in patterns) {
-    const match = normalized.match(patterns[key]);
-    if (match) data[key] = match[2].trim();
+  const FIELD_PRIORITY = [
+    "firstname",
+    "lastname",
+    "email",
+    "phone",
+    "company",
+    "job",
+    "subject",
+    "message",
+    "name" // name MUST be last
+  ];
+
+  words.forEach((word, index) => {
+    let matchedField = null;
+
+    // Priority-based matching
+    for (const field of FIELD_PRIORITY) {
+      if (FIELD_KEYWORDS[field]?.includes(word)) {
+        matchedField = field;
+        break;
+      }
+    }
+
+    // Skip standalone "name" if already in firstname/lastname
+    if (word === "name" && ["firstname", "lastname"].includes(currentField)) {
+      return;
+    }
+
+    if (matchedField) {
+      if (currentField) {
+        tokens.push({ field: currentField, value: buffer.join(" ") });
+      }
+
+      currentField = matchedField;
+      buffer = [];
+    } else if (currentField) {
+      buffer.push(word);
+    }
+  });
+
+  if (currentField && buffer.length) {
+    tokens.push({ field: currentField, value: buffer.join(" ") });
   }
 
-  if (/message|comment|note/i.test(raw)) {
-    data.message = raw.replace(/^(message|comment|note)\s+/i, "").trim();
-  }
-
-  // Post-process capitalization
-  if (data.firstname) data.firstname = toTitleCase(data.firstname);
-  if (data.lastname) data.lastname = toTitleCase(data.lastname);
-  if (data.job) data.job = toTitleCase(data.job);
-  if (data.company) data.company = toTitleCase(data.company);
-
-  // Free text → sentence case (keep raw meaning)
-  if (data.message) data.message = toSentenceCase(data.message);
-
-  return data;
+  return tokens;
 }
 
 function fillFormsFromData(data) {
