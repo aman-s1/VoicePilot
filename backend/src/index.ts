@@ -14,6 +14,6 @@ import { router } from './routers/router';
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
-		return router.handler(request);
+		return router.handler(request, env);
 	},
 } satisfies ExportedHandler<Env>;
