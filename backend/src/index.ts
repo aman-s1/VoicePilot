@@ -10,7 +10,7 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
-import { router } from "./routers/router";
+import { router } from './routers/router';
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
