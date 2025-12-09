@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VoicePilot",
-  "version": "0.1",
+  "version": "0.2",
   "description": "Fill web forms using your voice",
   "permissions": ["activeTab", "scripting"],
   "content_scripts": [

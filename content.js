@@ -46,6 +46,44 @@ function fillForms() {
   });
 }
 
+let recognition;
+let isListening = false;
+
+function startListening() {
+  if (!("webkitSpeechRecognition" in window)) {
+    alert("Speech recognition not supported in this browser");
+    return;
+  }
+
+  recognition = new webkitSpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.continuous = false;
+  recognition.interimResults = false;
+
+  recognition.onstart = () => {
+    isListening = true;
+    console.log("🎧 Listening...");
+  };
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    console.log("🗣️ User said:", transcript);
+
+    alert(`You said:\n"${transcript}"`);
+  };
+
+  recognition.onerror = (event) => {
+    console.error("Speech recognition error", event.error);
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    console.log("🛑 Listening stopped");
+  };
+
+  recognition.start();
+}
+
 
 // 👇 Create floating button
 function createVoicePilotButton() {
@@ -86,9 +124,14 @@ function createVoicePilotButton() {
   };
 
   button.addEventListener("click", () => {
-    console.log("🎙️ VoicePilot activated");
-    fillForms();
-  });
+  console.log("🎙️ VoicePilot activated");
+
+  if (isListening) {
+    recognition.stop();
+  } else {
+    startListening();
+  }
+});
 
   document.body.appendChild(button);
 }
