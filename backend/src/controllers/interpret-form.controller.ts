@@ -82,15 +82,23 @@ export async function interpretFormController(req: Request, env: Env): Promise<R
 
 	let aiRaw: string;
 	try {
-		aiRaw = await callLLM(prompt, env);
+		aiRaw = (await callLLM(prompt, env)) as string;
+		console.log('AI Raw Output:', aiRaw); // Debug logging
 	} catch (err) {
+		console.error('AI Call Failed:', err);
 		return Response.json({ error: 'AI processing failed' }, { status: 500 });
 	}
 
 	let parsed: InterpretFormResponse;
 	try {
+		// Clean up markdown code blocks if present
+		const jsonMatch = aiRaw.match(/\{[\s\S]*\}/);
+		if (jsonMatch) {
+			aiRaw = jsonMatch[0];
+		}
 		parsed = JSON.parse(aiRaw);
 	} catch {
+		console.error('JSON Parse Failed. Raw:', aiRaw);
 		return Response.json({ error: 'Invalid AI JSON output' }, { status: 500 });
 	}
 
