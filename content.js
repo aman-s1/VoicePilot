@@ -41,6 +41,32 @@ function cleanTokenValue(field, value) {
   return toTitleCase(value);
 }
 
+async function interpertApiCall(speech) {
+  const response = await fetch("https://autumn-pine-0c2b.voicepilot.workers.dev/api/interpret-form", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      speech,
+      fields: [
+        { key: "firstname", label: "First Name" },
+        { key: "lastname", label: "Last Name" },
+        { key: "email", label: "Email" },
+        { key: "phone", label: "Phone" },
+        { key: "company", label: "Company" },
+        { key: "job", label: "Job" },
+        { key: "subject", label: "Subject" },
+        { key: "message", label: "Message" },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  console.log("data from api call", data);
+  return data;
+}
+
 function tokenizeTranscript(text) {
   const words = text.split(" ");
   const tokens = [];
@@ -299,9 +325,11 @@ function startListening() {
     console.log("🎧 Listening...");
   };
 
-  recognition.onresult = (event) => {
+  recognition.onresult = async (event) => {
     const rawTranscript = event.results[0][0].transcript;
     const normalizedTranscript = normalizeTranscript(rawTranscript);
+
+    await interpertApiCall(normalizedTranscript); 
 
     const parsedData = parseTranscript(normalizedTranscript, rawTranscript);
     console.log("🧠 Parsed data:", parsedData);
@@ -402,7 +430,7 @@ function tokenizeTranscript(text) {
   return tokens;
 }
 
-function fillFormsFromData(data) {
+async function fillFormsFromData(data) {
   const inputs = document.querySelectorAll("input, textarea, select");
 
   inputs.forEach((input) => {
