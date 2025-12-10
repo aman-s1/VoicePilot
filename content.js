@@ -6,128 +6,7 @@ console.log("🎙️ VoicePilot loaded");
 let lastParsedData = null;
 let recognition;
 let isListening = false;
-
-const FIELD_KEYWORDS = {
-  email: ["email", "mail", "gmail"],
-  phone: ["phone", "mobile", "number"],
-  company: ["company", "organization", "org"],
-  job: ["job", "role", "title", "position"],
-  subject: ["subject", "topic", "regarding"],
-  firstname: ["firstname", "first"],
-  lastname: ["lastname", "last", "surname"],
-  name: ["name"],
-  message: ["message", "about", "description"]
-};
-
-
-function cleanTokenValue(field, value) {
-  if (field === "email") {
-    return value
-      .replace(/\s+at\s+| at /g, "@")
-      .replace(/\s+dot\s+| dot /g, ".")
-      .replace(/\s/g, "")
-      .toLowerCase();
-  }
-
-  if (field === "phone") {
-    return value.replace(/\D/g, "");
-  }
-
-  // Restore capitalization
-  if (field === "message") {
-    return toSentenceCase(value);
-  }
-  
-  return toTitleCase(value);
-}
-
-async function interpertApiCall(speech) {
-  const response = await fetch("https://autumn-pine-0c2b.voicepilot.workers.dev/api/interpret-form", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      speech,
-      fields: [
-        { key: "firstname", label: "First Name" },
-        { key: "lastname", label: "Last Name" },
-        { key: "email", label: "Email" },
-        { key: "phone", label: "Phone" },
-        { key: "company", label: "Company" },
-        { key: "job", label: "Job" },
-        { key: "subject", label: "Subject" },
-        { key: "message", label: "Message" },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  console.log("data from api call", data);
-  return data;
-}
-
-function tokenizeTranscript(text) {
-  const words = text.split(" ");
-  const tokens = [];
-
-  let currentField = null;
-  let buffer = [];
-
-  words.forEach((word) => {
-    // Smart skipping: If we are capturing first/last name, ignore the word 'name'
-    // This allows "First Name Aman" -> captures "Aman" under firstname
-    if (word === "name" && ["firstname", "lastname"].includes(currentField)) {
-        return; 
-    }
-
-    const matchedField = Object.keys(FIELD_KEYWORDS)
-      .find((field) => FIELD_KEYWORDS[field].includes(word));
-
-    if (matchedField) {
-      // If switching fields, save the previous one
-      if (currentField) {
-        tokens.push({ field: currentField, value: buffer.join(" ") });
-      }
-      currentField = matchedField;
-      buffer = [];
-    } else if (currentField) {
-      buffer.push(word);
-    }
-  });
-
-  if (currentField && buffer.length) {
-    tokens.push({ field: currentField, value: buffer.join(" ") });
-  }
-
-  return tokens;
-}
-
-function parseTranscript(normalized, raw) {
-  const tokens = tokenizeTranscript(normalized);
-  const result = {};
-
-  tokens.forEach(({ field, value }) => {
-    // Basic cleanup and capitalization
-    result[field] = cleanTokenValue(field, value);
-  });
-
-  // Handle name splitting if generic 'name' was used (e.g. "My name is Aman Suhag")
-  if (result.name) {
-    const parts = result.name.split(" ");
-    if (parts.length > 0) {
-        if (!result.firstname) result.firstname = parts[0];
-        if (!result.lastname && parts.length > 1) {
-            result.lastname = parts.slice(1).join(" ");
-        }
-    }
-    // Remove generic name field so it doesn't show up in Confirmation UI
-    delete result.name;
-  }
-
-  return result;
-}
-
+let pageFieldsCache = [];
 
 // ==========================================
 // 2. INITIALIZATION & UI (ENTRY POINT)
@@ -162,19 +41,16 @@ function createVoicePilotButton() {
   });
 
   button.onmouseenter = () => {
-    // On hover, slide left to reveal fully and add glow
     button.style.transform = "translateY(-50%) translateX(-6px)";
     button.style.boxShadow = "-6px 6px 20px rgba(99, 102, 241, 0.5)";
   };
   button.onmouseleave = () => {
-    // Return to original partial off-screen position
     button.style.transform = "translateY(-50%)";
     button.style.boxShadow = "-4px 4px 15px rgba(99, 102, 241, 0.35)";
   };
 
   button.addEventListener("click", () => {
     console.log("🎙️ VoicePilot activated");
-
     if (isListening) {
       recognition?.stop();
     } else {
@@ -185,8 +61,7 @@ function createVoicePilotButton() {
   document.body.appendChild(button);
 }
 
-function showConfirmUI(data) {
-  // Remove if already exists
+function showConfirmUI(data, fieldsMetadata) {
   document.getElementById("voicepilot-confirm")?.remove();
 
   const overlay = document.createElement("div");
@@ -198,8 +73,8 @@ function showConfirmUI(data) {
     left: "0",
     width: "100vw",
     height: "100vh",
-    background: "rgba(15, 23, 42, 0.6)", // Darker, tinted overlay
-    backdropFilter: "blur(8px)", // Glassmorphism blur
+    background: "rgba(15, 23, 42, 0.6)",
+    backdropFilter: "blur(8px)",
     zIndex: "10000",
     display: "flex",
     alignItems: "center",
@@ -208,12 +83,13 @@ function showConfirmUI(data) {
     transition: "opacity 0.3s ease"
   });
 
-  // Fade in animation
   requestAnimationFrame(() => overlay.style.opacity = "1");
 
   const modal = document.createElement("div");
   Object.assign(modal.style, {
     width: "400px",
+    maxHeight: "80vh",
+    overflowY: "auto",
     background: "#ffffff",
     borderRadius: "24px",
     padding: "32px",
@@ -223,8 +99,13 @@ function showConfirmUI(data) {
     transition: "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
   });
 
-  // Slide up animation
   requestAnimationFrame(() => modal.style.transform = "translateY(0)");
+
+  // Helper to find label for a key
+  const getLabel = (key) => {
+    const field = fieldsMetadata.find(f => f.key === key);
+    return field ? (field.label || key) : key;
+  };
 
   modal.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
@@ -237,22 +118,11 @@ function showConfirmUI(data) {
 
     <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:24px">
       ${Object.entries(data).map(
-        ([key, value]) => {
-          const labelMap = {
-            firstname: "First Name",
-            lastname: "Last Name",
-            email: "Email Address",
-            phone: "Phone Number",
-            job: "Job Title",
-            company: "Company Name",
-            message: "Message",
-            subject: "Subject"
-          };
-          const label = labelMap[key] || key;
-          
-          return `
+        ([key, value]) => `
           <div>
-            <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:6px">${label}</label>
+            <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:6px">
+              ${getLabel(key)}
+            </label>
             <input 
               data-key="${key}" 
               value="${value}" 
@@ -261,8 +131,7 @@ function showConfirmUI(data) {
               onblur="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';this.style.boxShadow='none'"
             />
           </div>
-        `;
-        }
+        `
       ).join("")}
     </div>
 
@@ -285,16 +154,10 @@ function showConfirmUI(data) {
     setTimeout(() => overlay.remove(), 300);
   };
 
-  // Add hover effects via JS since we're using inline styles
   const cancelBtn = document.getElementById("vp-cancel");
-  cancelBtn.onmouseenter = () => { cancelBtn.style.background = "#f8fafc"; cancelBtn.style.color = "#0f172a"; };
-  cancelBtn.onmouseleave = () => { cancelBtn.style.background = "#ffffff"; cancelBtn.style.color = "#64748b"; };
   cancelBtn.onclick = closeOverlay;
 
   const confirmBtn = document.getElementById("vp-confirm");
-  confirmBtn.onmouseenter = () => { confirmBtn.style.transform = "translateY(-1px)"; confirmBtn.style.boxShadow = "0 6px 20px rgba(99, 102, 241, 0.4)"; };
-  confirmBtn.onmouseleave = () => { confirmBtn.style.transform = "translateY(0)"; confirmBtn.style.boxShadow = "0 4px 12px rgba(99, 102, 241, 0.25)"; };
-
   confirmBtn.onclick = () => {
     const updatedData = {};
     modal.querySelectorAll("input").forEach((input) => {
@@ -307,11 +170,65 @@ function showConfirmUI(data) {
 }
 
 // ==========================================
-// 3. CORE LOGIC (SPEECH RECOGNITION)
+// 3. PAGE SCANNING & FIELD EXTRACTION
+// ==========================================
+function scanPageFields() {
+  const inputs = Array.from(document.querySelectorAll("input, textarea, select"));
+  const fields = [];
+
+  inputs.forEach((input) => {
+    // Skip hidden, submit, buttons, etc.
+    if (input.type === "hidden" || input.type === "submit" || input.type === "button" || input.type === "image" || input.style.display === "none") {
+      return;
+    }
+
+    const key = input.id || input.name;
+    if (!key) return; // Cannot map without a key
+
+    let label = "";
+
+    // 1. Try <label for="id">
+    if (input.id) {
+      const explicitLabel = document.querySelector(`label[for="${input.id}"]`);
+      if (explicitLabel) label = explicitLabel.innerText;
+    }
+
+    // 2. Try wrapping <label>
+    if (!label) {
+      const parentLabel = input.closest("label");
+      if (parentLabel) label = parentLabel.innerText.replace(input.value, ''); // Remove input value from text if present
+    }
+
+    // 3. Try aria-label or placeholder
+    if (!label) label = input.getAttribute("aria-label") || input.placeholder;
+
+    // 4. Fallback to name/id
+    if (!label) label = key;
+
+    fields.push({
+      key: key,
+      label: label.trim(),
+      type: input.tagName.toLowerCase() === "select" ? "select" : (input.type || "text")
+    });
+  });
+
+  console.log("🔎 Scanned Page Fields:", fields);
+  return fields;
+}
+
+// ==========================================
+// 4. CORE LOGIC (SPEECH & API)
 // ==========================================
 function startListening() {
   if (!("webkitSpeechRecognition" in window)) {
-    alert("Speech recognition not supported in this browser");
+    alert("Speech recognition not supported");
+    return;
+  }
+
+  // Scan fields fresh every time we start listening
+  pageFieldsCache = scanPageFields();
+  if (pageFieldsCache.length === 0) {
+    alert("No visible form fields found on this page.");
     return;
   }
 
@@ -327,169 +244,70 @@ function startListening() {
 
   recognition.onresult = async (event) => {
     const rawTranscript = event.results[0][0].transcript;
-    const normalizedTranscript = normalizeTranscript(rawTranscript);
+    // Basic normalization for cleaner API input, but trust API mostly
+    const normalizedTranscript = rawTranscript.trim(); 
 
-    await interpertApiCall(normalizedTranscript); 
+    console.log("🗣️ Transcript:", normalizedTranscript);
 
-    const parsedData = parseTranscript(normalizedTranscript, rawTranscript);
-    console.log("🧠 Parsed data:", parsedData);
-
-    lastParsedData = parsedData;
-    showConfirmUI(parsedData);
+    try {
+      const apiResult = await interpertApiCall(normalizedTranscript, pageFieldsCache);
+      
+      if (apiResult && apiResult.data && Object.keys(apiResult.data).length > 0) {
+        console.log("🤖 AI Parsed data:", apiResult.data);
+        lastParsedData = apiResult.data;
+        showConfirmUI(apiResult.data, pageFieldsCache);
+      } else {
+        console.warn("⚠️ No data extracted from speech.");
+      }
+    } catch (err) {
+      console.error("❌ API Failed:", err);
+      alert("Failed to process speech. Check console.");
+    }
   };
 
-  recognition.onerror = (event) => {
-    console.error("Speech recognition error", event.error);
-  };
-
-  recognition.onend = () => {
-    isListening = false;
-    console.log("🛑 Listening stopped");
-  };
+  recognition.onerror = (e) => console.error("Speech Error", e);
+  recognition.onend = () => { isListening = false; console.log("🛑 Stopped"); };
 
   recognition.start();
 }
 
-function normalizeTranscript(transcript) {
-  let text = transcript.toLowerCase();
-
-  // 1. Handle "at the rate" FIRST (most specific)
-  text = text.replace(/\bat\s+the\s+rate\b/g, "@");
-
-  // 2. Handle standalone "at"
-  text = text.replace(/\bat\b/g, "@");
-
-  // 3. Handle dot
-  text = text.replace(/\bdot\b/g, ".");
-
-  // 4. Other symbols
-  text = text.replace(/\bunderscore\b/g, "_");
-  text = text.replace(/\bdash\b/g, "-");
-
-  // 5. Remove spaces around email symbols
-  text = text.replace(/\s*@\s*/g, "@");
-  text = text.replace(/\s*\.\s*/g, ".");
-
-  // 6. Phone numbers: merge spaced digits
-  text = text.replace(/(\d)\s+(\d)/g, "$1$2");
-
-  return text.trim();
-}
-
-function tokenizeTranscript(text) {
-  const words = text.split(" ");
-  const tokens = [];
-
-  let currentField = null;
-  let buffer = [];
-
-  const FIELD_PRIORITY = [
-    "firstname",
-    "lastname",
-    "email",
-    "phone",
-    "company",
-    "job",
-    "subject",
-    "message",
-    "name" // name MUST be last
-  ];
-
-  words.forEach((word, index) => {
-    let matchedField = null;
-
-    // Priority-based matching
-    for (const field of FIELD_PRIORITY) {
-      if (FIELD_KEYWORDS[field]?.includes(word)) {
-        matchedField = field;
-        break;
-      }
-    }
-
-    // Skip standalone "name" if already in firstname/lastname
-    if (word === "name" && ["firstname", "lastname"].includes(currentField)) {
-      return;
-    }
-
-    if (matchedField) {
-      if (currentField) {
-        tokens.push({ field: currentField, value: buffer.join(" ") });
-      }
-
-      currentField = matchedField;
-      buffer = [];
-    } else if (currentField) {
-      buffer.push(word);
-    }
+async function interpertApiCall(speech, fields) {
+  const response = await fetch("https://autumn-pine-0c2b.voicepilot.workers.dev/api/interpret-form", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ speech, fields }),
   });
 
-  if (currentField && buffer.length) {
-    tokens.push({ field: currentField, value: buffer.join(" ") });
-  }
-
-  return tokens;
+  const data = await response.json();
+  console.log("📡 API Response:", data);
+  return data;
 }
 
-async function fillFormsFromData(data) {
-  const inputs = document.querySelectorAll("input, textarea, select");
-
-  inputs.forEach((input) => {
-    const name = input.name?.toLowerCase() || "";
-    const placeholder = input.placeholder?.toLowerCase() || "";
-    const id = input.id?.toLowerCase() || "";
-
-    if (data.firstname && (name.includes("first") || placeholder.includes("first"))) {
-      input.value = data.firstname;
+function fillFormsFromData(data) {
+  // Data keys match element IDs or Names directly now
+  Object.entries(data).forEach(([key, value]) => {
+    let element = document.getElementById(key);
+    
+    // If ID lookup fails, try Name
+    if (!element) {
+      const elementsByName = document.getElementsByName(key);
+      if (elementsByName.length > 0) element = elementsByName[0];
     }
 
-    if (data.lastname && (name.includes("last") || placeholder.includes("last"))) {
-      input.value = data.lastname;
+    if (element) {
+      element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      // Highlight effect
+      element.style.transition = "background-color 0.5s";
+      const originalBg = element.style.backgroundColor;
+      element.style.backgroundColor = "#e0e7ff"; // Light indigo
+      setTimeout(() => element.style.backgroundColor = originalBg, 1500);
     }
-
-    if (data.email && name.includes("email")) {
-      input.value = data.email;
-    }
-
-    if (data.phone && (name.includes("phone") || name.includes("mobile"))) {
-      input.value = data.phone;
-    }
-
-    if (data.job && (name.includes("job") || name.includes("title"))) {
-      input.value = data.job;
-    }
-
-    if (data.company && name.includes("company")) {
-      input.value = data.company;
-    }
-
-    if (data.message && (name.includes("message") || placeholder.includes("message"))) {
-      input.value = data.message;
-    }
-
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
 // ==========================================
-// 4. HELPER FUNCTIONS
+// 5. BOOTSTRAP
 // ==========================================
-function toTitleCase(str) {
-  return str
-    .toLowerCase()
-    .split(" ")
-    .filter(Boolean)
-    .map(word => word[0].toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-function toSentenceCase(str) {
-  const s = str.trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// ==========================================
-// 5. EXECUTION
-// ==========================================
-// Wait for page to load
 window.addEventListener("load", createVoicePilotButton);
