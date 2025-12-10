@@ -61,7 +61,7 @@ function createVoicePilotButton() {
   document.body.appendChild(button);
 }
 
-function showConfirmUI(data, fieldsMetadata) {
+function showConfirmUI(data, fieldsMetadata, confidenceScores = {}) {
   document.getElementById("voicepilot-confirm")?.remove();
 
   const overlay = document.createElement("div");
@@ -107,6 +107,15 @@ function showConfirmUI(data, fieldsMetadata) {
     return field ? (field.label || key) : key;
   };
 
+  // Helper for confidence color
+  const getConfidenceStyle = (key) => {
+    const score = confidenceScores[key];
+
+    if (score >= 0.8) return "border:1px solid #22c55e;background:#f0fdf4;"; // Green (High)
+    if (score >= 0.5) return "border:1px solid #eab308;background:#fefce8;"; // Yellow (Medium)
+    return "border:1px solid #ef4444;background:#fef2f2;"; // Red (Low)
+  };
+
   modal.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
       <div style="width:40px;height:40px;border-radius:12px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:20px">🎙️</div>
@@ -117,18 +126,23 @@ function showConfirmUI(data, fieldsMetadata) {
     </div>
 
     <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:24px">
-      ${Object.entries(data).map(
+      ${Object.entries(data)
+        .filter(([_, value]) => value && value.trim() !== "")
+        .map(
         ([key, value]) => `
           <div>
-            <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:6px">
-              ${getLabel(key)}
-            </label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8">${getLabel(key)}</label>
+              ${confidenceScores[key] !== undefined ? 
+                `<span style="font-size:10px;font-weight:500;color:#64748b;background:#f1f5f9;padding:2px 6px;border-radius:4px">${Math.round(confidenceScores[key] * 100)}%</span>` 
+                : ''}
+            </div>
             <input 
               data-key="${key}" 
               value="${value}" 
-              style="width:100%;padding:12px;font-size:14px;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;outline:none;transition:all 0.2s"
-              onfocus="this.style.borderColor='#6366f1';this.style.background='#ffffff';this.style.boxShadow='0 0 0 4px rgba(99, 102, 241, 0.1)'"
-              onblur="this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';this.style.boxShadow='none'"
+              style="width:100%;padding:12px;font-size:14px;color:#0f172a;border-radius:12px;outline:none;transition:all 0.2s;${getConfidenceStyle(key)}"
+              onfocus="this.style.filter='brightness(0.95)';this.style.boxShadow='0 0 0 4px rgba(99, 102, 241, 0.1)'"
+              onblur="this.style.filter='none';this.style.boxShadow='none'"
             />
           </div>
         `
@@ -254,8 +268,23 @@ function startListening() {
       
       if (apiResult && apiResult.data && Object.keys(apiResult.data).length > 0) {
         console.log("🤖 AI Parsed data:", apiResult.data);
-        lastParsedData = apiResult.data;
-        showConfirmUI(apiResult.data, pageFieldsCache);
+        console.log("📊 Confidence scores:", apiResult.confidence);
+
+        // Filter out fields with 0 confidence
+        const filteredData = {};
+        const confidence = apiResult.confidence || {};
+        
+        Object.keys(apiResult.data).forEach(key => {
+          if (confidence[key] !== undefined && confidence[key] > 0) {
+             filteredData[key] = apiResult.data[key];
+          } else if (confidence[key] === undefined) {
+             // Keep fields without confidence score (fallback)
+             filteredData[key] = apiResult.data[key];
+          }
+        });
+
+        lastParsedData = filteredData;
+        showConfirmUI(filteredData, pageFieldsCache, confidence);
       } else {
         console.warn("⚠️ No data extracted from speech.");
       }
